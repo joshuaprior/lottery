@@ -1,0 +1,226 @@
+<html>
+  <head>
+    <style>
+      :root {
+        
+      }
+
+      body {
+        padding: 20px;
+        margin: 0px;
+      }
+
+      #container {
+        --version: "v1.0";
+        --container-width: 5in;
+        --container-height: 10.5in;
+
+        --rough-options: 12;
+        --rough-offset: var(--rough-options);
+        --rough-width: calc(var(--container-width) - .25in * (var(--rough-options) - var(--rough-width-index)));
+
+        width: var(--container-width);
+        height: var(--container-height);
+
+        position: relative;
+      }
+
+      #container[data-rough-width-index= "1"] { --rough-width-index:  1 }
+      #container[data-rough-width-index= "2"] { --rough-width-index:  2 }
+      #container[data-rough-width-index= "3"] { --rough-width-index:  3 }
+      #container[data-rough-width-index= "4"] { --rough-width-index:  4 }
+      #container[data-rough-width-index= "5"] { --rough-width-index:  5 }
+      #container[data-rough-width-index= "6"] { --rough-width-index:  6 }
+      #container[data-rough-width-index= "7"] { --rough-width-index:  7 }
+      #container[data-rough-width-index= "8"] { --rough-width-index:  8 }
+      #container[data-rough-width-index= "9"] { --rough-width-index:  9 }
+      #container[data-rough-width-index="10"] { --rough-width-index: 10 }
+      #container[data-rough-width-index="11"] { --rough-width-index: 11 }
+      #container[data-rough-width-index="12"] { --rough-width-index: 12 }
+
+      #container:focus {
+        outline: none;
+      }
+      
+      #container::before {
+        content: var(--version);
+        display: block;
+        position: absolute;
+        top: 0px;
+        left: 0px;
+        width: 20px;
+        height: 20px;
+        padding: 10px;
+
+        border-top: solid 1px black;
+        border-left: solid 1px black;
+      }
+
+      #container::after {
+        content: '';
+        display: block;
+        position: absolute;
+        top: -30px;
+        left: -30px;
+        width: 30px;
+        height: 30px;
+
+        border-bottom: solid 1px black;
+        border-right: solid 1px black;
+      }
+
+      .width-option {
+        position: absolute;
+        right: calc(.25in * (var(--rough-options) - var(--index)));
+        top: 0px;
+        
+        width: 30px;
+        height: 30px;
+        border-right: solid 1px black;
+
+        box-sizing: border-box;
+      }
+
+      .width-option::before {
+        content: attr(id);
+        display: block;
+        position: absolute;
+        --size: 20px;
+
+        
+        bottom: calc(-1 * (var(--size) + 4px));
+        right: calc(-1 * (var(--size) / 2));
+
+        line-height: var(--size);
+        height: var(--size);
+        width: var(--size);
+        text-align: center;
+      }
+
+      [data-rough-width-index="1"] #A::before,
+      [data-rough-width-index="2"] #B::before,
+      [data-rough-width-index="3"] #C::before,
+      [data-rough-width-index="4"] #D::before,
+      [data-rough-width-index="5"] #E::before,
+      [data-rough-width-index="6"] #F::before,
+      [data-rough-width-index="7"] #G::before,
+      [data-rough-width-index="8"] #H::before,
+      [data-rough-width-index="9"] #I::before,
+      [data-rough-width-index="10"] #J::before,
+      [data-rough-width-index="11"] #K::before,
+      [data-rough-width-index="12"] #L::before
+      {
+        background-color: black;
+        color: white;
+      }
+
+      .fine-width-option {
+        position: absolute;
+        left: var(--rough-width);
+        top: 100px;
+        
+        width: 30px;
+        height: 30px;
+        border-left: solid 1px black;
+
+        box-sizing: border-box;
+      }
+      
+      .height-option {
+        position: absolute;
+        left: 0px;
+        bottom: calc(.25in * (12 - var(--index)));
+        
+        width: 30px;
+        height: 30px;
+        border-bottom: solid 1px black;
+      }
+
+      .height-option::before {
+        content: attr(id);
+        display: block;
+        position: absolute;
+
+        --size: 20px;
+        
+        bottom: calc(-1 * (var(--size) / 2));
+        right: calc(-1 * (var(--size) + 4px));
+        
+        line-height: var(--size);
+        height: var(--size);
+        width: var(--size);
+        text-align: center;
+      }
+
+      [data-rough-height=M] #M::before,
+      [data-rough-height=N] #N::before,
+      [data-rough-height=O] #O::before,
+      [data-rough-height=P] #P::before,
+      [data-rough-height=Q] #Q::before,
+      [data-rough-height=R] #R::before,
+      [data-rough-height=S] #S::before,
+      [data-rough-height=T] #T::before,
+      [data-rough-height=U] #U::before,
+      [data-rough-height=V] #V::before,
+      [data-rough-height=W] #W::before,
+      [data-rough-height=X] #X::before
+      {
+        background-color: black;
+        color: white;
+      }
+
+      #fine-width-container {
+        border: solid 1px red;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="container" tabindex="0">
+      <div id="A" class="width-option" style="--index: 1"></div>
+      <div id="B" class="width-option" style="--index: 2"></div>
+      <div id="C" class="width-option" style="--index: 3"></div>
+      <div id="D" class="width-option" style="--index: 4"></div>
+      <div id="E" class="width-option" style="--index: 5"></div>
+      <div id="F" class="width-option" style="--index: 6"></div>
+      <div id="G" class="width-option" style="--index: 7"></div>
+      <div id="H" class="width-option" style="--index: 8"></div>
+      <div id="I" class="width-option" style="--index: 9"></div>
+      <div id="J" class="width-option" style="--index: 10"></div>
+      <div id="K" class="width-option" style="--index: 11"></div>
+      <div id="L" class="width-option" style="--index: 12"></div>
+
+      <div id="fine-width-container">
+
+      </div>
+      <div class="fine-width-option" style="--index: 1"></div>
+      
+      
+      <div id="M" class="height-option" style="--index: 1"></div>
+      <div id="N" class="height-option" style="--index: 2"></div>
+      <div id="O" class="height-option" style="--index: 3"></div>
+      <div id="P" class="height-option" style="--index: 4"></div>
+      <div id="Q" class="height-option" style="--index: 5"></div>
+      <div id="R" class="height-option" style="--index: 6"></div>
+      <div id="S" class="height-option" style="--index: 7"></div>
+      <div id="T" class="height-option" style="--index: 8"></div>
+      <div id="U" class="height-option" style="--index: 9"></div>
+      <div id="V" class="height-option" style="--index: 10"></div>
+      <div id="W" class="height-option" style="--index: 11"></div>
+      <div id="X" class="height-option" style="--index: 12"></div>
+    </div>
+
+    <script>
+      const container = document.getElementById('container');
+      container.addEventListener('keydown', (event) => {
+        event.preventDefault();
+        const key = event.key.toUpperCase();
+
+        if ('A' <= key && key <= 'L') {
+          container.dataset.roughWidthIndex = key.charCodeAt() - 'A'.charCodeAt() + 1;
+        } else if ('M' <= key && key <= 'X') {
+          container.dataset.roughHeight = key;
+        }
+      });
+    </script>
+  </body>
+</html>

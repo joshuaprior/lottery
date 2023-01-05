@@ -1,0 +1,1354 @@
+<html>
+  <head>
+    <script src="https://unpkg.com/transformation-matrix@2"></script>
+    <script data-file-name="test-runner.js">
+      const STATUS = Object.freeze({
+        PASSED: 'passed',
+        FAILED: 'failed',
+        SKIPPED: 'skipped',
+      });
+
+      class TestReport {
+        #passed = 0;
+        #failed = 0;
+        #skipped = 0;
+        #results = [];
+
+        get passed() { return this.#passed; }
+        get failed() { return this.#failed; }
+        get skipped() { return this.#skipped; }
+        get results() { return this.#results; }
+
+        addTestResult(desc, passed, error) {
+          const status = passed ? STATUS.PASSED : STATUS.FAILED;
+          this.#results.push({desc, status, error});
+          passed ? this.#passed++ : this.#failed++;
+        }
+
+        addGroupResult(desc, report) {
+          const status = report.failed === 0 ? STATUS.PASSED : STATUS.FAILED;
+          this.#results.push({desc, status, report});
+          this.#passed += report.passed;
+          this.#failed += report.failed;
+          this.#skipped += report.skipped;
+        }
+
+        addSkipped(desc) {
+          const status = STATUS.SKIPPED;
+          this.#results.push({desc, status});
+          this.#skipped++;
+        }
+      }
+
+      class TestRunner {
+        #root = [];
+        #currentGroup = this.#root;
+
+        constructor() {
+          this.describe.skip = (...args) => this.#skip(...args);
+          this.it.skip = (...args) => this.#skip(...args);
+          this.it.each = (...args) => this.#each(...args);
+        }
+
+        describe = (desc, fn) => {
+          if (!fn) {
+            this.#currentGroup.push({ desc });
+            return;
+          }
+
+          const group = [];
+          const oldGroup = this.#currentGroup;
+          this.#currentGroup = group;
+          try {
+            fn();
+          } catch (e) {
+            console.log('Error while describing ' + desc);
+            console.error(e);
+          }
+          this.#currentGroup = oldGroup;
+
+          this.#currentGroup.push({ desc, group });
+        }
+
+        it = (desc, fn) => {
+          if (!fn) return void (this.#skip(desc));
+          this.#currentGroup.push({ desc, test: fn });
+        }
+
+        #skip = (desc) => {
+          this.#currentGroup.push({ desc });
+        }
+
+        #each = (runs, desc, fn) => {
+          if (!fn) {
+            this.#currentGroup.push({ desc });
+            return;
+          }
+
+          runs.forEach(args => {
+            const runDesc = `${desc} [${args}]`
+            const runFn = () => fn(...args);
+            this.it(runDesc, runFn);
+          });
+        }
+
+        run = (options={}) => {
+          const { Renderer=TestReportRenderer } = options;
+
+          const report = this.#execute(this.#root);
+          console.log(report);
+          
+          const renderer = new Renderer();
+          renderer.renderResults(report);
+          renderer.renderSummary(report);
+        }
+
+        #execute(group) {
+          const report = new TestReport();
+
+          group.forEach(unit => {
+            const { desc, test, group } = unit;
+
+            if (test) {
+              try {
+                test();
+                report.addTestResult(desc, true);
+              } catch(error) {
+                report.addTestResult(desc, false, error);
+              }
+            } else if (group) {
+              const subReport = this.#execute(group);
+              report.addGroupResult(desc, subReport);
+            } else {
+              report.addSkipped(desc);
+            }
+          });
+
+          return report;
+        }
+      }
+    
+      class TestReportRenderer {
+        #indent = '  ';
+
+        #FLAGS = Object.freeze({
+          [STATUS.PASSED]:  '✔',
+          [STATUS.FAILED]:  '✗',
+          [STATUS.SKIPPED]: '-',
+          ERROR:            '↳',
+          EMPTY:            ' ',
+        });
+
+        #COLOR = Object.freeze({
+          PASSED:  'lime',
+          FAILED:  'tomato',
+          SKIPPED: 'grey',
+          ERROR:   'red',
+          NORMAL:  'white',
+        });
+
+        #MAPCOLOR = Object.freeze({
+          [STATUS.PASSED]:  this.#COLOR.PASSED,
+          [STATUS.FAILED]:  this.#COLOR.FAILED,
+          [STATUS.SKIPPED]: this.#COLOR.SKIPPED,
+        });
+        
+        renderResults(report) {
+          this.#renderResults(report);
+        }
+
+        #renderResults(report, indent='') {
+          report.results.forEach(result => {
+            const {desc, status, error, report: subReport} = result;
+            const flag = this.#FLAGS[status];
+            const color = this.#MAPCOLOR[status];
+
+            const formattedLogLines = [
+              `%c${indent}${flag} ${desc}`
+              ,`color: ${color}`
+            ];
+
+            if (error) {
+              formattedLogLines[0] += `\n%c${indent}${this.#FLAGS.EMPTY} ${this.#FLAGS.ERROR} ${error.message}`;
+              formattedLogLines.push(`color: ${this.#COLOR.ERROR}`);
+            } 
+            
+            console.log(...formattedLogLines);
+            
+            if (subReport) this.#renderResults(subReport, indent + this.#indent);
+          });
+        }
+
+        renderSummary(report) {
+          const { passed, failed, skipped } = report;
+          const { PASSED, FAILED, SKIPPED, ERROR, NORMAL } = this.#COLOR;
+          const color = (n, color) => n > 0 ? color: NORMAL;
+          const size = '20px';
+
+          console.log(
+            '%cResults\n'
+              + `%c${this.#indent}Passed:  %c${passed}\n`
+              + `%c${this.#indent}Failed:  %c${failed}\n`
+              + `%c${this.#indent}Skipped: %c${skipped}`,
+            `font-size: ${size}`, 
+            '', `font-size: ${size}; color: ${color(passed, PASSED)}`,
+            '', `font-size: ${size}; color: ${color(failed, FAILED)}`,
+            '', `font-size: ${size}; color: ${color(skipped, SKIPPED)}`,
+          );
+          
+          const errors = [];
+          function getErrors(report) {
+            report.results.forEach(result => {
+              if (result.status !== STATUS.FAILED) return;
+              
+              const { desc, error, report } = result;
+              if (error) errors.push({ desc, error });
+              if (report) getErrors(report);
+            });
+          }
+
+          getErrors(report);
+
+          errors.forEach(({ desc, error }) => {
+            console.error(`%c${desc}\n`, `font-size: ${size}; color: ${FAILED}`, error);
+          });
+        }
+      }
+    
+      function throwError(skip, message) { if (!skip) throw new Error(message); }
+      
+      function expect(a) {
+        return new Proxy({
+          toEqual: (b) => throwError(a === b, `expect(${a}).toEqual(${b})`),
+          toBePrecisely: (b, precision=6) => throwError(Math.abs(a - b) < 1/10**precision, `expect(${a}).toBePrecisely(${b}, ${precision})`),
+        }, {
+          get: function (target, prop, receiver) {
+            if (!Object.prototype.hasOwnProperty.call(target, prop)) {
+              throw new Error(`expect(...).${prop} is not a supported expectation.`);
+            }
+            return Reflect.get(...arguments);
+          }
+        });
+      }
+    </script>
+
+    <script>
+      const unitTests = {};
+      function unit(suite) {
+        const {run, ...runner} = new TestRunner();
+        const tests = suite ? [unitTests[suite]] : Object.values(unitTests);
+        tests.forEach(test => test(runner));
+        run();
+      }
+    </script>
+
+    <script>
+      setTimeout(() => {
+        [...document.querySelectorAll('g[data-poly-id]')]
+          .forEach(g => Object.defineProperties(g, {
+            
+            edit: {
+              get: () => () => {
+                g.asCrosses = false;
+                editPolygonPoint(g.childNodes[0]);
+              }
+            },
+
+            asCrosses: {
+              get: () => g._mode,
+              set: (mode) => {
+                if (typeof mode === 'string') {
+                  mode = (
+                      mode === 'undefined' ? undefined
+                    : mode === 'true' ? true
+                    : false
+                  );
+                }
+
+                if (mode !== g._mode) {
+                  const id = g.dataset.polyId;
+                  g._mode = mode;
+                    mode === undefined ? clearPoly(id)
+                  : mode === false ? renderAsPolygon(id)
+                  : renderAsCrosses(id);
+                }
+                
+              },
+            },
+
+            lines: {
+              get: () => {
+                const lines = new Array(4);
+                const { TOP, BOTTOM, LEFT, RIGHT } = POLY;
+                const [topL, topR, botR, botL] = parsePoints(g.dataset.points);
+                
+                lines[TOP]     = [topL, topR];
+                lines[BOTTOM]  = [botL, botR];
+                lines[LEFT]    = [topL, botL];
+                lines[RIGHT]   = [topR, botR];
+                return lines;
+              }
+            }
+          }));
+
+        [...document.querySelectorAll('g[data-poly-id][data-as-crosses]')]
+          .forEach(g => g.asCrosses = g.dataset.asCrosses);
+      }, 100);
+    </script>
+
+    <style>
+      .page {
+        display: none;
+      }
+      #scan {
+        display: none;
+      }
+
+      /* @page {
+        size: 1600px 2100px;
+      } */
+
+      body {
+        /* --print-preview: block; */
+        /* --screen: block; */
+        --rough-calibration: block;
+      }
+
+      body {
+        margin: 0px;
+        border: none;
+        padding: 0px;
+      }
+
+      .slip {
+        position: relative;
+
+        /* About double the dimensions of a regular letter size piece of paper. */
+        box-sizing: border-box;
+        width: 1600px;
+        height: 2100px;
+      }
+
+      .slip .view {
+        position: absolute;
+        top: 0px;
+        left: 0px;
+        
+        box-sizing: border-box;
+        height: 100%;
+        width: 100%;
+      }
+
+      .slip .view img.slip-view {
+        position: absolute;
+        top: 0px;
+        left: 0px;
+
+        object-fit: contain;
+        object-position: left top;
+      }
+
+      .slip .view svg.overlay {
+        position: absolute;
+        top: 0px;
+        left: 0px;
+
+        height: 100%;
+        width: 100%;
+      }
+
+      /* Visibility of sections of the slip. */
+      .slip .view                   { display: none                           }
+      .slip .view.screen            { display: var(--screen,            none) }
+      .slip .view.print-preview     { display: var(--print-preview,     none) }
+      .slip .view.rough-calibration { display: var(--rough-calibration, none) }
+
+      /* .rough-calibration {
+        display: none;
+
+        position: absolute;
+        top: 0px;
+        left: 0px;
+
+        width: 100%;
+        height: 100%;
+      } */
+
+      /* .rough-calibration .table {
+        border-spacing: 0px;
+      }
+
+      .rough-calibration table td {
+        box-sizing: border-box;
+        width: 50px;
+        height: 50px;
+
+        border: solid 1px black;
+        text-align: center;
+        vertical-align: middle;
+      } */
+
+      body[data-rough-calibration=true] .slip {
+        display: none;
+      }
+
+      body[data-rough-calibration=true] .rough-calibration {
+        display: block;
+      }
+
+      @media print {
+        .slip .view img.slip-view {
+          visibility: hidden;
+        }
+      }
+    </style>
+<!--
+    <style id="viewport">
+      body {
+        position: relative;
+        margin: 0px;
+
+        --screen: block;
+        /* --page: inline-block; */
+        /* --foo: block; */
+      }
+
+      @page {
+        size: 3.25in 8.5in;
+        margin: 0px;
+      }
+
+      @media print {
+        img {
+          opacity: 0;
+        }
+      }
+    </style>
+
+    <style id="screen">
+      
+    </style>
+
+    <style id="page">
+      .page {
+        top: 0px;
+        left: 0px;
+        display: var(--page, none);
+        position: absolute;
+        width: var(--width);
+        height: var(--height);
+        /* background-color: red; */
+
+        /* Paper dimensions */
+        --width: 3.25in;
+        --height: 8.5in;
+
+        /* Printable area relative to the paper dimensions */
+        --top: 12px;
+        --right: -48px;
+        --bottom: 28px;
+        --left: 61px;
+      }
+
+      .page img {
+        width: 100%;
+      }
+
+      .page .printable-area {
+        position: absolute;
+        display: block;
+        top: var(--top);
+        right: var(--right);
+        bottom: var(--bottom);
+        left: var(--left);
+
+        /* background-color: green; */
+      }
+
+      .page svg {
+        position: absolute;
+        top: 0px;
+        right: 0px;
+        bottom: 0px;
+        left: 0px;
+      }
+      
+      @media print {
+        .page > svg {
+          display: none;
+        }
+      }
+    </style>
+
+    <style id="scan">
+      #scan {
+        position: relative;
+        display: var(--foo, none);
+        width: 1700px;
+        height: 2200px;
+      }
+
+      #scan svg {
+        position: absolute;
+        top: 0px;
+        right: 0px;
+        bottom: 0px;
+        left: 0px;
+      }
+    </style>
+    -->
+  </head>
+  <body data-rough-calibration="true">
+    <div class="slip">
+      <div class="screen view">
+        <img class="slip-view" src="./megamillions/2022-12-10.jpg">
+        <svg class="overlay" data-slip-id="screen-tmp">
+          <g data-poly-id="screen-tmp-frame" data-as-crosses="false" data-points="5.5,118 299,120 299.3,760 4.7,758.5" data-color="black"></g>
+          <g data-poly-id="screen-tmp-mark" data-as-crosses="false" data-points="82,138 97,138 97,144 82,144" data-color="black"></g>
+        </svg>
+      </div>
+      <div class="print-preview view">
+        <img class="slip-view" src="./print-preview.png">
+        <svg class="overlay" data-slip-id="print-preview">
+          <g data-poly-id="print-preview-last-visible" data-as-crosses="false" data-points="22,19 60.099998474121094,19 59.900001525878906,56 22,56" data-color="green"></g>
+          <g data-poly-id="print-preview-extents" data-as-crosses="false" data-points="60.099998474121094,56.59999084472656 79.80000305175781,56.49999237060547 79.9000015258789,74.9000015258789 60.40000915527344,75" data-color="red"></g>
+        </svg>
+      </div>
+      <div class="scale-fix view">
+        <svg class="overlay" data-slip-id="scale-fix">
+          <path d="
+            M 550, 1200
+            L 576.1333333333333, 1222.6666666666667
+
+            M 576.1333333333333, 1200
+            L 576.1333333333333, 1222.6666666666667
+
+            M 550, 1222.6666666666667
+            L 576.1333333333333, 1222.6666666666667
+          " stroke="white" strokeWidth=".5" fill="none"></path>
+        </svg>
+      </div>
+      <div class="rough-calibration view">
+        <svg class="overlay" data-slip-id="rough-calibration">
+          <g data-poly-id="rough-calibration-last-visible" data-as-crosses="false" data-points="22,19 60.099998474121094,19 59.900001525878906,56 22,56" data-color="green"></g>
+        </svg>
+        <script>
+          ((svg) => {
+            setTimeout(() => drawGrid(svg), 2000);
+          })(document.currentScript.parentElement.querySelector('.overlay'));
+
+          function drawGrid(svg) {
+            const rows = 42;
+            const cols = 32;
+  
+            const visibleBottomRightCell = 747; //984;
+            const [visibleRows=rows, visibleCols=cols] = coords(visibleBottomRightCell);
+  
+            const lastVisibleEdge = 37.5;
+            const xExtent = 19.6;
+            const yExtent = 18.5;
+            const xOffset = 0;
+            const yOffset = -2;
+            // const [visibleRows=rows, visibleCols=cols] = [undefined, undefined];
+            console.log({visibleRows, visibleCols});
+  
+            function coords(id) {
+              if (0 < id && id <= cols * rows) {
+                const row = Math.floor(id / cols) + 1;
+                const col = id - ((row - 1) * cols);
+                return [row, col];
+              }
+              
+              return [];
+            }
+  
+            const lines = [];
+            for (let row = 0; row <= visibleRows; row++) {
+              lines.push([[0, row * 50], [visibleCols * 50, row * 50]]);
+            }
+  
+            for (let col = 0; col <= visibleCols; col++) {
+              lines.push([[col * 50, 0], [col * 50, visibleRows * 50]]);
+            }
+  
+            const numbers = [];
+            for (let row = 1; row <= visibleRows; row++) {
+              for (let col = 1; col <= visibleCols; col++) {
+                const id = cols * (row - 1) + col;
+                const x = (col - 1) * 50;
+                const y = (row - 1) * 50;
+                
+                const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                text.textContent = id;
+                text.setAttribute('x', x);
+                text.setAttribute('y', y);
+                numbers.push(text);
+  
+                setTimeout(() => {
+                  const {width, height} = text.getBoundingClientRect();
+                  text.setAttribute('x', x + 25 - width/2);
+                  text.setAttribute('y', y + 25 + height/2);
+                }, 0);
+              }
+            }
+  
+            // const grid = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            // grid.classList.add('grid');
+            // grid.classList.add('overlay');
+            // grid.dataset.slipId = 'rough-calibration';
+            // container.appendChild(grid);
+            
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            svg.appendChild(path);
+            path.setAttribute('d', lines
+              .map(([[x1, y1], [x2, y2]]) => ` M ${x1},${y1} L ${x2},${y2} `)
+              .join('')
+            );
+            path.setAttribute('stroke', 'black');
+            path.setAttribute('strokeWidth', ".5");
+            path.setAttribute('fill', "none");
+  
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            svg.appendChild(g);
+            g.append(...numbers);
+  
+            const red = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            svg.appendChild(red);
+  
+            const scale = 50 / lastVisibleEdge;
+            const [r, c] = coords(visibleBottomRightCell);
+            const [x1, y1] = [c*50, r*50];
+            const [x2, y2] = [x1 + xExtent * scale +xOffset, y1 + yExtent * scale + yOffset];
+            console.log({point: [x1, y1], extent: [x2, y2], visibleBottomRightCell, scale, lastVisibleEdge, xExtent, yExtent });
+            
+            red.setAttribute('d', `
+              M ${x1}, ${y1}
+              L ${x2}, ${y2}
+  
+              M ${x2}, ${y1}
+              L ${x2}, ${y2}
+  
+              M ${x1}, ${y2}
+              L ${x2}, ${y2}
+              
+            `);
+            red.setAttribute('stroke', 'red');
+            red.setAttribute('strokeWidth', ".5");
+            red.setAttribute('fill', "none");
+          }
+        </script>
+      </div>
+    </div>
+
+    <div class="page">
+      <img src="./megamillions/2022-12-10.jpg">
+      <div class="printable-area">
+        <svg data-slip-id="print" viewBox="0 0 312 816">
+          <!--
+          <polygon id="trial-print-correct" points="9.272647,108.552927 304.434799,107.202246 309.984779,764.438342 14.393745,767.353716" preserveAspectRatio="xMaxMinY" stroke="orange" stroke-width=".5" fill="none"></polygon>
+          <polygon id="print-mark" points="86.380723,128.228252 101.463717,128.052598 101.517251,134.220913 86.434578,134.397065" stroke="black" stroke-width=".5" fill="none"></polygon>
+          -->
+
+          <g data-poly-id="print-frame-raw" data-as-crosses="false" data-points="5.5,118 299,120 299.3,760 4.7,758.5" data-color="black"></g>
+          <g data-poly-id="print-frame-expected" data-as-crosses="undefined" data-points="5.5,118.00000000000001 4.699999999999989,758.5000000000001 299.3,760.0000000000001 299,120" data-color="green"></g>
+          <g data-poly-id="print-frame-observed" data-as-crosses="undefined" data-points="3.4867757508168893,125.29960868398746 -2.0278269889589495,747.0752871370244 290.17677100913596,752.7050233896491 294.7781586361762,130.80290736918766" data-color="red"></g>
+          <g data-poly-id="print-frame" data-as-crosses="false" data-points="7.51641660956567,110.46527536922935 11.719634267097938,770.2151580680812 308.7472375255787,767.4329666051748 303.25698564333095,108.84918521562196" data-color="black"></g>
+
+          <g data-poly-id="print-mark-raw" data-as-crosses="false" data-points="82,138 97,138 97,144 82,144" data-color="black"></g>
+          <g data-poly-id="print-mark" data-as-crosses="false" data-points="82,138 97,138 97,144 82,144" data-color="black"></g>
+
+          <path
+            d="
+              M 5.4750195160031225, 138
+              L 299.0084375, 138
+              M 97, 118.62350936967633
+              L 97, 758.9699592668024
+              M 5.467525370804059, 144
+              L 299.01125, 144
+              M 82, 118.52129471890972
+              L 82, 758.8935845213849
+            "
+            preserveAspectRatio="xMaxMinY" stroke="orange" strokeWidth=".5" fill="none"></path>
+
+            <path id="test-lines"
+              d="
+              M 5.5, 118
+L 299, 120
+              "
+              preserveAspectRatio="xMaxMinY" stroke="blue" strokeWidth=".5" fill="none"></path>
+        </svg>
+      </div>
+      <svg data-slip-id="screen" viewBox="0 0 312 816">
+        <g data-poly-id="screen-frame" data-as-crosses="undefined" data-points="5.5,118 299,120 299.3,760 4.7,758.5" data-color="black"></g>
+        <g data-poly-id="screen-mark" data-points="82,138 97,138 97,144 82,144" data-color="black"></g>
+      </svg>
+    </div>
+
+    
+    <div id="scan">
+      <img src="./Scan.jpg">
+      <svg data-slip-id="scan" viewBox="0 0 1700 2200">
+        <g data-poly-id="scan-frame-expected" data-as-crosses="false" data-points="188.4000244140625,246.9999542236328 791.5997314453125,250.60003662109375 791.9000854492188,1583.69970703125 186.09999084472656,1580.8997802734375" data-color="green"></g>
+        <g data-poly-id="scan-frame-observed" data-as-crosses="false" data-points="184.2000732421875,262.2000732421875 782.80029296875,273.1000061035156 772.900390625,1568.4998779296875 172.0999755859375,1557.10009765625" data-color="red"></g>
+      </svg>
+    </div>
+
+    <script data-file-name="core.js">
+      const MAX_SCREEN_WIDTH = 700;
+      const MAX_SCREEN_HEIGHT = 1600;
+
+      function isBasicallyEqual(a, b, precision = 6) {
+        const divisor = 10 ** precision;
+        return Math.abs(a - b) < 1 / divisor;
+      }
+    </script>
+
+    <script data-file-name="core.spec.js">
+      unitTests.core = ({ describe, it }) => {
+        describe('core', () => {
+          describe('isBasicallyEqual');
+        });
+      };
+    </script>
+
+    <script data-file-name="geometry.js">
+      const {scale, rotate, translate, inverse, compose, applyToPoint, applyToPoints, decomposeTSR} = window.TransformationMatrix;
+
+      function getLength(line) {
+        const [[x1, y1], [x2, y2]] = line;
+        return Math.sqrt(
+          Math.abs(x1 - x2)**2
+          + Math.abs(y1 - y2)**2
+        );
+      }
+
+      // Get the angle of a line relative to the x-axis.
+      function getBasisAngle(line) {
+        const [[x1, y1], [x2, y2]] = line;
+        const [dx, dy] = [x2 - x1, y2 - y1];
+        
+        const piScale = (
+            dx >= 0 ? 0
+          : dy >= 0 ? 1
+          : -1
+        );
+
+        const angle = piScale * Math.PI + Math.atan(dy/dx);
+        return angle === -Math.PI ? Math.PI : angle;
+      }
+    </script>
+    
+    <script data-file-name="geometry.spec.js">
+      unitTests.geometry = ({ describe, it }) => {
+        describe('geometry.js', () => {
+          describe('getLength', () => {
+            it('should return the length of a line with slope 1.', () => {
+              const line = [[-5, -5], [13, 13]];
+              const length = getLength(line);
+              expect(length).toEqual(Math.sqrt(648));
+            });
+
+            it('should return the length of a horizontal line.', () => {
+              const line = [[-5, 13], [17, 13]];
+              const length = getLength(line);
+              expect(length).toEqual(22);
+            });
+
+            it('should return the length of a vertial line.', () => {
+              const line = [[13, -5], [13, 17]];
+              const length = getLength(line);
+              expect(length).toEqual(22);
+            });
+
+            it('should return the length of a line with negative slope.', () => {
+              const line = [[-19, -19], [-3, -3]];
+              const length = getLength(line);
+              expect(length).toEqual(Math.sqrt(512));
+            });
+          });
+          
+          describe('getBasisAngle', () => {
+
+            // Correctly returns the angle for a line formed
+            // from the origin to the provided point as long
+            // as the angle to calculate is between 1/2PI
+            // and -1/2PI.
+            const trigAngle = ([x, y]) => Math.atan(y / x);
+
+            describe('near x-axis', () => {
+              it('should be able to calculate 0 radian angles.', () => {
+                const line = [[5, 19], [17, 19]];
+                const angle = getBasisAngle(line);
+                expect(angle).toEqual(0);
+              });
+
+              it('should be able to calculate PI radian angles.', () => {
+                const line = [[0, 0], [-MAX_SCREEN_WIDTH, 0]];
+                const angle = getBasisAngle(line);
+                expect(angle).toBePrecisely(Math.PI, 6);
+              });
+
+              it('should be able to calculate angles close 0 radians.', () => {
+                const line1 = [[0, 0], [MAX_SCREEN_WIDTH, 1]];
+                const line2 = [[0, 0], [MAX_SCREEN_WIDTH, -1]];
+
+                const expectedAngle1 = trigAngle(line1[1]);
+                const expectedAngle2 = -expectedAngle1;
+
+                expect(getBasisAngle(line1)).toBePrecisely(expectedAngle1, 6);
+                expect(getBasisAngle(line2)).toBePrecisely(expectedAngle2, 6);
+              });
+
+              it('should be able to calculate angles close PI radians.', () => {
+                const line1 = [[0, 0], [-MAX_SCREEN_WIDTH, 1]];
+                const line2 = [[0, 0], [-MAX_SCREEN_WIDTH, -1]];
+                const line1ReflectedAboutYAxis = [[0, 0], [MAX_SCREEN_WIDTH, 1]];
+
+                const partialExpectedAngle = trigAngle(line1ReflectedAboutYAxis[1]);
+                const expectedAngle1 = Math.PI - partialExpectedAngle;
+                const expectedAngle2 = -expectedAngle1;
+
+                expect(getBasisAngle(line1)).toBePrecisely(expectedAngle1, 6);
+                expect(getBasisAngle(line2)).toBePrecisely(expectedAngle2, 6);
+              });
+            });
+
+            describe('near y-axis', () => {
+              it('should be able to calculate 1/2PI radian angles.', () => {
+                const line = [[0, 0], [0, MAX_SCREEN_HEIGHT]];
+                const angle = getBasisAngle(line);
+                expect(angle).toBePrecisely(1/2 * Math.PI, 6);
+              });
+
+              it('should be able to calculate -1/2PI angles.', () => {
+                const line = [[0, 0], [0, -MAX_SCREEN_HEIGHT]];
+                const angle = getBasisAngle(line);
+                expect(angle).toBePrecisely(1/2 * -Math.PI, 6);
+              });
+
+              it('should be able to calculate angles close 1/2PI radians.', () => {
+                const line1 = [[0, 0], [1, MAX_SCREEN_HEIGHT]];
+                const line2 = [[0, 0], [-1, MAX_SCREEN_HEIGHT]];
+                const line2RotatedToXAxis = [[0, 0], [MAX_SCREEN_HEIGHT, 1]];
+
+                const partialExpectedAngle = trigAngle(line2RotatedToXAxis[1]);
+                const expectedAngle1 = 1/2 * Math.PI - partialExpectedAngle;
+                const expectedAngle2 = 1/2 * Math.PI + partialExpectedAngle
+
+                expect(getBasisAngle(line1)).toBePrecisely(expectedAngle1, 6);
+                expect(getBasisAngle(line2)).toBePrecisely(expectedAngle2, 6);
+              });
+
+              it('should be able to calculate angles close -1/2PI radians.', () => {
+                const line1 = [[0, 0], [1, -MAX_SCREEN_HEIGHT]];
+                const line2 = [[0, 0], [-1, -MAX_SCREEN_HEIGHT]];
+                const positiveVersionOfAngle = [[0, 0], [MAX_SCREEN_HEIGHT, 1]];
+
+                const partialExpectedAngle = trigAngle(positiveVersionOfAngle[1]);
+                const expectedAngle1 = 1/2 * -Math.PI + partialExpectedAngle;
+                const expectedAngle2 = 1/2 * -Math.PI - partialExpectedAngle
+
+                expect(getBasisAngle(line1)).toBePrecisely(expectedAngle1, 6);
+                expect(getBasisAngle(line2)).toBePrecisely(expectedAngle2, 6);
+              });
+            });
+
+            describe('within quadrants', () => {
+              it('should be able to calculate angles in quadrant I.', () => {
+                const line = [[0, 0], [20, 20]];
+                expect(getBasisAngle(line)).toBePrecisely(1/4 * Math.PI, 6);
+              });
+
+              it('should be able to calculate angles in quadrant II.', () => {
+                const line = [[0, 0], [-20, 20]];
+                expect(getBasisAngle(line)).toBePrecisely(3/4 * Math.PI, 6);
+              });
+
+              it('should be able to calculate angles in quadrant III.', () => {
+                const line = [[0, 0], [-20, -20]];
+                expect(getBasisAngle(line)).toBePrecisely(-3/4 * Math.PI, 6);
+              });
+
+              it('should be able to calculate angles in quadrant IV.', () => {
+                const line = [[0, 0], [20, -20]];
+                expect(getBasisAngle(line)).toBePrecisely(-1/4 * Math.PI, 6);
+              });
+            });
+
+            describe('not at orgin', () => {
+              it('should be able to calculate angles in quadrant I.', () => {
+                const line = [[10, 10], [20, 20]];
+                expect(getBasisAngle(line)).toBePrecisely(1/4 * Math.PI, 6);
+              });
+
+              it('should be able to calculate angles in quadrant II.', () => {
+                const line = [[-10, 10], [-20, 20]];
+                expect(getBasisAngle(line)).toBePrecisely(3/4 * Math.PI, 6);
+              });
+
+              it('should be able to calculate angles in quadrant III.', () => {
+                const line = [[-10, -10], [-20, -20]];
+                expect(getBasisAngle(line)).toBePrecisely(-3/4 * Math.PI, 6);
+              });
+
+              it('should be able to calculate angles in quadrant IV.', () => {
+                const line = [[10, -10], [20, -20]];
+                expect(getBasisAngle(line)).toBePrecisely(-1/4 * Math.PI, 6);
+              });
+            });
+          });
+        });
+      };
+    </script>
+
+    <script data-file-name="svg.js">
+      function editPolygonPoint(el, startIndex = 0) {
+        const map = [
+          [ 0, 1 ],
+          [ 3, 2 ],
+        ];
+
+        let vert = startIndex <= 1 ? 0 : 1;
+        let horz = map[vert][0] === startIndex ? 0 : 1;
+        
+        const handleKey = (event) => {
+          event.preventDefault();
+
+          const index = map[vert][horz];
+          const point = el.points[index];
+          const { key, shiftKey, altKey, ctrlKey } = event;
+          
+          const step = (
+            ctrlKey ? .1
+            : 1
+          );
+
+          if (shiftKey) (
+              key === 'ArrowLeft'  ? horz = 0
+            : key === 'ArrowRight' ? horz = 1
+            : key === 'ArrowUp'    ? vert = 0
+            : key === 'ArrowDown'  ? vert = 1
+            : undefined
+          )
+          else (
+              key === 'ArrowLeft'  ? point.x -= step
+            : key === 'ArrowRight' ? point.x += step
+            : key === 'ArrowUp'    ? point.y -= step
+            : key === 'ArrowDown'  ? point.y += step
+            : key === 'Escape'     ? window.stopEdit()
+            : undefined
+          );
+        };
+        
+        document.body.addEventListener('keydown', handleKey);
+        window.stopEdit = () => {
+          const lines = getLinesFromPoly(el);
+          console.log(formatPolygon(lines[0], lines[2]));
+          document.body.removeEventListener('keydown', handleKey);
+        }
+      }
+    
+      function clearPoly(id) {
+        const g = document.querySelector(`[data-poly-id="${id}"]`);
+        [...g.childNodes].forEach(c => g.removeChild(c));
+      }
+
+      function renderAsPolygon(id) {
+        const g = document.querySelector(`[data-poly-id="${id}"]`);
+        clearPoly(id);
+
+        const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        polygon.setAttribute('points', g.dataset.points);
+        polygon.setAttribute('preserveAspectRatio', "xMaxMinY");
+        polygon.setAttribute('stroke', g.dataset.color);
+        polygon.setAttribute('strokeWidth', ".5");
+        polygon.setAttribute('fill', "none");
+        g.appendChild(polygon);
+      }
+
+      function renderAsCrosses(id) {
+        const g = document.querySelector(`[data-poly-id="${id}"]`);
+        clearPoly(id);
+       
+        parsePoints(g.dataset.points).forEach(([x, y]) => {
+          const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+
+          const s = 20;
+          polygon.setAttribute('d', `
+            M ${x     }, ${y + s}
+            L ${x     }, ${y - s}
+            M ${x + s }, ${y    }
+            L ${x - s }, ${y    }
+          `);
+          polygon.setAttribute('preserveAspectRatio', "xMaxMinY");
+          polygon.setAttribute('stroke', g.dataset.color || 'black');
+          polygon.setAttribute('strokeWidth', ".5");
+          polygon.setAttribute('fill', "none");
+          g.appendChild(polygon);
+        });
+      }
+
+      function parsePoints(str) {
+        return str
+          .split(' ')
+          .map(p => p
+            .split(',')
+            .map(n => Number(n))
+          );
+      }
+    </script>
+
+    <script data-file-name="transform.js">
+      function transformToXAxis(line) {
+        const [[x1, y1]] = line;
+        return compose(
+          rotate(-getBasisAngle(line)),
+          translate(-x1, -y1),
+        )
+      }
+
+      function transformToLine(fromLine, toLine) {
+        const s = getScaleFromLength(fromLine, toLine);
+        return compose(
+          inverse(transformToXAxis(toLine)),
+          scale(s, s),
+          transformToXAxis(fromLine),
+        );
+      }
+    </script>
+
+    <script data-file-name="transform.spec.js">
+      unitTests.transform = ({ describe, it }) => {
+        describe('transform', () => {
+          describe('transformToXAxis', () => {
+            it.each([
+              [{
+                line: [[0, 0], [0, 5]],
+                rotate: -1/2 * Math.PI,
+                translate: [0, 0],
+              }],
+            ], 'should translate produce transform that translates point 1 to the origin then rotates point 2 to the x-axis.', ({line, rotate, translate}) => {
+              const { translate: { tx, ty }, rotation: { angle: r } } = decomposeTSR(transformToXAxis(line));
+              expect(tx).toEqual(translate[0]);
+              expect(ty).toEqual(translate[1]);
+              expect(r).toEqual(rotate);
+            });
+            // it('should translate produce transform that translates point 1 to the origin then rotates point 2 to the x-axis.', () => {
+            //   const line = [[0, 0], [0, 5]];
+            //   debugger;
+            //   console.log(decomposeTSR(transformToXAxis(line)));
+            // });
+          });
+        });
+      }
+    </script>
+
+    <script data-file-name="global.js">
+      const POLY = {
+        TOP: 0,
+        RIGHT: 1,
+        BOTTOM: 2,
+        LEFT: 3,
+      }
+
+      function kababToCamel(str) {
+        return str
+          .split(/-/)
+          .filter(part => !!part)
+          .map((part, i) => i ? part.at(0).toUpperCase() + part.slice(1) : part)
+          .join('');
+      }
+
+      setTimeout(() => {
+        const slips = {};
+
+        document.querySelectorAll('[data-slip-id]').forEach(slip => {
+          const slipName = kababToCamel(slip.dataset.slipId);
+          const polys = {};
+          slips[slipName] = polys;
+
+          slip.querySelectorAll('[data-poly-id]').forEach(poly => {
+            const strip = new RegExp(`^${slip.dataset.slipId}-`);
+            const polyName = kababToCamel(poly.dataset.polyId.replace(strip, ''));
+            polys[polyName] = poly;
+          });
+        });
+        
+        window.slips = slips;
+      }, 50);
+
+      // Returns the four lines of the polygon in the order top,
+      // right, bottom, left. The points in the horizontal lines
+      // are ordered from left-to-right. The points in the vertical
+      // lines are ordered from top-to-bottom.
+      function getLinesFromPoly(ploygon) {
+        const [p0, p1, p2, p3] = [...ploygon.points].map(({x, y}) => [x, y]);
+
+        const poly = Array(4);
+        poly[ POLY.TOP    ] = [p0, p1];
+        poly[ POLY.RIGHT  ] = [p1, p2];
+        poly[ POLY.BOTTOM ] = [p3, p2];
+        poly[ POLY.LEFT   ] = [p0, p3];
+        
+        return poly;
+      }
+
+      // function reflectLineAboutYAxis(line, origin = [0,0]) {
+      //   return [
+      //     reflectPointAboutYAxis(line[0], origin),
+      //     reflectPointAboutYAxis(line[1], origin),
+      //   ];
+      // }
+
+      function reflectPointAboutYAxis(point, origin = [0,0]) {
+        let [x, y] = point;
+        const [o] = origin;
+        
+        x -= o; // translate to origin
+        x = -x; // reflect about y-axis
+        x += o; // undo translation
+
+        return [x, y];
+      }
+
+      function getScaleFromLength(startLine, endLine) {
+        return getLength(endLine) / getLength(startLine);
+      }
+
+      
+
+      function applyToLine(matrix, line) {
+        const [p1, p2] = line;
+        return [applyToPoint(matrix, p1), applyToPoint(matrix, p2)];
+      }
+
+      function pointToObject(point) {
+        if (!Array.isArray(point)) return point;
+        return {x: point[0], y: point[1]};
+      }
+
+      function pointToArray(point) {
+        if (Array.isArray(point)) return point;
+        return [point.x, point.y];
+      }
+
+      // Calculate corrected coordinates for print to cause the next
+      // printed observed to land on expected.
+      function calibrateLine(print, expected, observed) {
+        // Translate observed into print space
+        const toPrintSpace = transformToLine(expected, print);
+        
+        // observed = applyToLine(toPrintSpace, observed);
+        return applyToLine(toPrintSpace, observed);
+        
+        // // Calculate transform to move observed to print in print space
+        // const correction = transformToLine(observed, print);
+
+        // // Apply the correction to print
+        // return applyToLine(correction, print);
+      }
+
+      function round(n, precision) {
+        const scale = 10**precision;
+        return Math.round(n * scale) / scale;
+      }
+
+      function formatPointSVG(point) {
+        const [x, y] = point;
+        // return `${round(x, 6)},${round(y, 6)}`;
+        return `${x},${y}`;
+      }
+
+      // Formats a <polygon> points attribute string given the
+      // top and bottom lines of the polygon. If sides is true
+      // then top and bottom are treated as left and right.
+      function formatPolygon(top, bottom, sides) {
+        const [left, right] = [top, bottom];
+        
+        const points = [
+          sides ? left[0] : top[0],
+          sides ? right[0] : top[1],
+          sides ? right[1] : bottom[1],
+          sides ? left[1] : bottom[0],
+        ];
+        
+        // return points.map(formatPointSVG).join(' ');
+        return points.map(formatPointSVG).join(' ');
+      }
+
+      // returns undefined if the two lines are parallel or are the same line
+      function getIntersection(lineA, lineB) {
+        const m1 = getSlope(lineA);
+        const b1 = getYIntercept(lineA);
+        const m2 = getSlope(lineB);
+        const b2 = getYIntercept(lineB);
+
+        const bothVertical = m1 === undefined && m2 === undefined;
+        const oneVertical = m1 === undefined || m2 === undefined;
+        if (bothVertical || (!oneVertical && isBasicallyEqual(m1, m2))) return;
+
+        // find intersection with vertical lines
+        if (m1 === undefined) {
+          const [x1] = lineA[0];
+          return [x1, m2 * x1 + b2];
+        } else if (m2 === undefined) {
+          const [x2] = lineB[0];
+          return [x2, m1 * x2 + b1];
+        }
+
+        const x = (b1 - b2) / (m2 - m1);
+        const y = (m1 * x) + b1;
+        return [x, y];
+      }
+
+      function getSlope(line) {
+        const [[x1, y1], [x2, y2]] = line;
+        if (isBasicallyEqual(x1, x2)) return;
+        return (y2 - y1) / (x2 - x1);
+      }
+
+      function getYIntercept(line) {
+        const [[x, y]] = line;
+        const m = getSlope(line);
+        return y - (m * x);
+      }
+
+      function calibrate3() {
+        const print = getLinesFromPoly(document.getElementById('trial-print'));
+        const expected = getLinesFromPoly(document.getElementById('trial-expected'));
+        const observed = getLinesFromPoly(document.getElementById('trial-observed'));
+
+        const { TOP, BOTTOM } = POLY;
+
+        const top = calibrateLine(print[TOP], expected[TOP], observed[TOP]);
+        const bottom = calibrateLine(print[BOTTOM], expected[BOTTOM], observed[BOTTOM]);
+
+        // top
+        console.log('top', print[TOP], top);
+
+        // bottom
+        console.log('bottom', print[BOTTOM], bottom);
+
+        console.log(formatPolygon(top, bottom));
+      }
+
+      function transformMark() {
+        const print = {
+          frame: document.querySelector('[data-poly-id=print-transform-frame]'),
+          rawFrame: document.querySelector('[data-poly-id=print-transform-frame-uncalibrated]'),
+          rawMark: document.querySelector('[data-poly-id=print-mark-uncalibrated]'),
+        };
+
+        const { TOP, BOTTOM, LEFT, RIGHT } = POLY;
+
+        const from = print.rawFrame.lines;
+        const to = print.frame.lines;
+        const on = print.rawMark.lines;
+
+        function tIntersection(markLine, frameLine) {
+          const intersection = getIntersection(
+            print.rawMark.lines[markLine],
+            print.rawFrame.lines[frameLine]
+          );
+
+          const transform = transformToLine(
+            print.rawFrame.lines[frameLine],
+            print.frame.lines[frameLine]
+          );
+
+          return applyToPoint(transform, intersection);
+        }
+        
+        console.log({
+          top: [
+            getIntersection(on[TOP], from[LEFT]),
+            getIntersection(on[TOP], from[RIGHT]),
+          ],
+          right: [
+            getIntersection(on[RIGHT], from[TOP]),
+            getIntersection(on[RIGHT], from[BOTTOM]),
+          ],
+          bottom: [
+            getIntersection(on[BOTTOM], from[LEFT]),
+            getIntersection(on[BOTTOM], from[RIGHT]),
+          ],
+          left: [
+            getIntersection(on[LEFT], from[TOP]),
+            getIntersection(on[LEFT], from[BOTTOM]),
+          ],
+        });
+
+        const boundT = [tIntersection(TOP,    LEFT), tIntersection(TOP,    RIGHT)];
+        const boundR = [tIntersection(RIGHT,  TOP),  tIntersection(RIGHT,  BOTTOM)];
+        const boundB = [tIntersection(BOTTOM, LEFT), tIntersection(BOTTOM, RIGHT)];
+        const boundL = [tIntersection(LEFT,   TOP),  tIntersection(LEFT,   BOTTOM)];
+        // const transformed = applyToLine(
+        //   transformToLine( print.rawFrame.lines[RIGHT], print.frame.lines[RIGHT] ),
+        //   print.rawFrame.lines[RIGHT],
+        // );
+        const transformed = print.rawFrame.lines[TOP];
+
+        console.log(
+          [boundT, boundR, boundB, boundL, transformed]
+            .map(([[x1, y1], [x2, y2]]) => `M ${x1}, ${y1}\nL ${x2}, ${y2}`)
+            .join('\n')
+        );
+
+        const top = [
+          getIntersection(boundT, boundL),
+          getIntersection(boundT, boundR),
+        ];
+
+        const bottom = [
+          getIntersection(boundB, boundL),
+          getIntersection(boundB, boundR),
+        ];
+        
+        console.log(formatPolygon(top, bottom));
+      }
+
+      function transformScanToPrint() {
+        const print = {
+          start: document.querySelector('[data-poly-id=print-transform-frame-uncalibrated]'),
+          expected: document.querySelector('[data-poly-id=print-transform-frame-expected]'),
+          observed: document.querySelector('[data-poly-id=print-transform-frame-observed]'),
+          corrected: document.querySelector('[data-poly-id=print-transform-frame]'),
+        };
+
+        const scan = {
+          expected: document.querySelector('[data-poly-id=scan-transform-frame-expected]'),
+          observed: document.querySelector('[data-poly-id=scan-transform-frame-observed]'),
+        };
+
+        const from = print.observed;
+        const to = print.expected;
+        const topTransform = transformToLine(from.lines[POLY.TOP], to.lines[POLY.TOP]);
+        const botTransform = transformToLine(from.lines[POLY.BOTTOM], to.lines[POLY.BOTTOM]);
+
+        const on = print.expected;
+        console.log(formatPolygon(
+          applyToLine(topTransform, on.lines[POLY.TOP]),
+          applyToLine(botTransform, on.lines[POLY.BOTTOM]),
+        ));
+      }
+
+      // setTimeout(() => {
+      //   document.getElementById('test-lines')
+      //     .setAttribute('d', 
+      //       [
+      //         document.querySelector(
+      //           '[data-poly-id=print-transform-frame]')
+      //           .lines[POLY.TOP]
+      //       ]
+      //       .map(([[x1, y1], [x2, y2]]) => `M ${x1}, ${y1}\nL ${x2}, ${y2}`)
+      //       .join('\n')
+      //     );
+      // }, 100);
+      
+    </script>
+
+    <script>
+      // unit();
+    </script>
+  </body>
+</html>
